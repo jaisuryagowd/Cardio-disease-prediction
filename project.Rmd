@@ -1,0 +1,366 @@
+---
+title: 'Cardio Disease prediction'
+output:
+  pdf_document: default
+  word_document: default
+  html_document:
+    fig_height: 4
+    highlight: pygments
+    theme: spacelab
+---
+
+
+* * *
+
+```{r}
+##dplyr is a package which provides a set of tools for efficiently manipulating datasets
+library(dplyr)
+##plyr is a package that makes it simple to split data apart, do stuff to it, and mash it back together.
+library(plyr)
+##ggplot2 is a system for declaratively creating graphics, based on The Grammar of Graphics. 
+library(ggplot2)
+library(tidyverse)
+##The caret package (short for Classification And REgression Training) contains functions to streamline the model training process for complex regression and classification problems.
+library(caret)
+##The corrplot package is a graphical display of a correlation matrix, confidence interval.
+library(corrplot)
+library(psych)
+
+library(multcomp)
+
+library(caret)
+library(e1071)
+library(rpart)
+library(rpart.plot)
+
+```
+
+ 
+
+
+##In this project we are using Cardio Vascular disease dataset.which is available in Kaggle.
+##The dataset is imported to the cardio. 
+```{r}
+cardio <- read.csv("D:/sem-7/FDA/cardio_train.csv", sep = ";")
+head(cardio)
+```
+
+```{r}
+##Here we are checking for null values in the dataset by using is.na()
+colSums(is.na(cardio))
+##str() gives sructure of the dataset.
+str(cardio)
+```
+###As from the above we can conclude that there is no null values in the dataset
+
+
+```{r}
+##Removing the first attribute because it won't be used to predict the cardio disease and doesn't impact.
+cardio1 <- cardio[, 2:13]
+head(cardio1)
+```
+```{r}
+##Manuplating the dataset.
+cardio1$age <- as.numeric(cardio1$age)
+cardio1$gender <- as.numeric(cardio1$gender)
+cardio1$height<- as.numeric(cardio1$height)
+cardio1$weight <- as.numeric(cardio1$weight)
+cardio1$ap_hi <- as.numeric(cardio1$ap_hi)
+cardio1$ap_lo <- as.numeric(cardio1$ap_lo)
+cardio1$cholesterol<- as.numeric(cardio1$cholesterol)
+cardio1$gluc <- as.numeric(cardio1$gluc)
+cardio1$smoke <- as.numeric(cardio1$smoke)
+cardio1$alco <- as.numeric(cardio1$alco)
+cardio1$active <- as.numeric(cardio1$active)
+
+
+
+cardio1$cardio[cardio1$cardio == 1] <- "Yes"
+cardio1$cardio[cardio1$cardio == 0] <- "No"
+
+cardio1$cardio <- as.factor(cardio1$cardio)
+
+
+##Remove the rows with systolic blood pressure lower than diastolic blood pressure i.e. ap_hi < ap_lo
+ap_cleaned <- cardio1 %>% filter(cardio1$ap_hi > cardio1$ap_lo)
+
+
+
+```
+
+
+
+
+```{r}
+##Using boxplot graph we can find the outtlier points and we clean the dataset by removing outliers.
+bwplot(~ap_cleaned$height,xlab="x",main="Height Boxplot")
+height_cleaned <- ap_cleaned %>% filter(ap_cleaned$height >= 140 & ap_cleaned$height <= 200)
+
+bwplot(~height_cleaned$weight,xlab="x",main="Weight Boxplot")
+
+weight_cleaned <- height_cleaned %>% filter(height_cleaned$weight >= 30)
+
+bwplot(~weight_cleaned$ap_lo,xlab="x",main="Diastolic blood pressure(ap_lo) Boxplot")
+
+ap_cleaned2 <- weight_cleaned %>% filter(weight_cleaned$ap_lo >= 30 & weight_cleaned$ap_lo <= 140)
+
+
+
+cleaned_cardio <- ap_cleaned2 %>% filter(ap_cleaned2$ap_hi >= 70 & ap_cleaned2$ap_hi < 240)
+
+head(cleaned_cardio)
+
+
+
+
+summary(cleaned_cardio)
+
+
+```
+
+
+
+
+
+
+
+```{r}
+
+##Converting age from days to years and will become easy to study.
+
+cleaned_cardio$age <- round(cleaned_cardio$age/365)
+
+
+
+```
+
+
+```{r}
+# Age vs Presence of the Disease 
+
+ggplot(data = cleaned_cardio,aes(x=cardio,y=age,col=cardio))+
+  geom_boxplot()+
+  xlab("presence of the disease")+
+  ylab("Age")
+
+
+
+```
+##Elder people tend to have Cardio disease more than younger people.
+
+
+
+```{r}
+#Systolic Blood pressure vs Presence of the Disease 
+
+ggplot(data = cleaned_cardio,aes(x=cardio,y=ap_hi,col=cardio))+
+  geom_boxplot()+
+  xlab("presence of the disease")+
+  ylab("systolic blood pressure")
+```
+##Median Systolic blood pressure is higher for the people with Cardio Disease than for the people without Cardio Disease.
+
+```{r}
+
+#Diastolic Blood pressure vs Presence of the Disease 
+ggplot(data = cleaned_cardio,aes(x=cardio,y=ap_lo,col=cardio))+
+  geom_boxplot()+
+  xlab("presence of the disease")+
+  ylab("diastolic blood pressure")
+
+```
+
+##Diastolic blood pressure is also high for the people with CVD.
+```{r}
+
+#Smoke vs Presence of the Disease 
+ggplot(data = cleaned_cardio) +
+  geom_bar(aes(x =smoke , fill = cardio), position = "fill")
+```
+
+
+```{r}
+
+#cholesterol vs Presence of the Disease 
+ggplot(data = cleaned_cardio) +
+  geom_bar(aes(x =cholesterol , fill = cardio), position = "fill")
+```
+##cholesterol are high then cardio disease chances are also high
+
+```{r}
+#glucose vs Presence of the Disease
+ggplot(data = cleaned_cardio) +
+  geom_bar(aes(x =gluc , fill = cardio), position = "fill")
+```
+##glucose are high then cardio disease chances are also high
+
+```{r}
+ggplot(data = cleaned_cardio) +
+  geom_bar(aes(x =alco , fill = cardio), position = "fill")
+```
+
+
+
+##For the feasibility and accuracy of analysis, we select 10000 records out of the cleaned dataset using simple random sampling and split the data into the training set, validation set and test set according to the 75:25 partition. The training set is to fit the model; the validation set is to fine-tune the model hyperparameters and combat overfitting; the test set is to evaluate the model performances based on some indicators, such as accuracy and precision.
+
+```{r}
+data <- sample_n(cleaned_cardio, 10000)
+idx <- sample(seq(1, 2), size = nrow(data), replace = TRUE, prob = c(.75, .25))
+train <- data[idx == 1,]
+test <- data[idx == 2,]
+
+
+
+
+```
+##Since the dataset varies at each time of sampling, for simplicity, I will continue the analysis with my sampling set of train, validation and test data.
+```{r}
+cols = c("gender", "cholesterol", "gluc", "smoke", "alco", "active", "cardio")
+train[cols] = lapply(train[cols], factor)
+test[cols] = lapply(test[cols], factor)
+
+```
+
+##Summary Statistics
+```{r}
+summary(train)
+```
+##4830   observations are females (gender = 1) and 2652  are males (gender = 2). There is a significant difference in the number of observations between gender. Thus, the data may be slightly biased due to the unequal distribution of gender.
+
+##3784    observations are not having cardiovascular diseases and the other 3698  observations suffer from cardiovascular diseases. The approximate ratio is 1:1 which suggests that the dependent variable “cardio” is distributed evenly, and accuracy is thus a reliable method to evaluate how a model performs.
+
+```{r}
+##Histogram and density plots are used to identify the distribution of continuous variables.
+ggplot(train, aes(x=age)) + geom_density()
+
+ggplot(train, aes(x=height)) + 
+  geom_histogram(aes(y=..density..),
+                 binwidth=.5,
+                 colour="black", fill="white") +
+  geom_density(alpha=.2, fill="#FF6666")
+
+ggplot(train, aes(x=weight)) + 
+  geom_histogram(aes(y=..density..),
+                 binwidth=.5,
+                 colour="black", fill="white") +
+  geom_density(alpha=.2, fill="#FF6666")
+```
+
+##From the above three plots, height, weight and age are not normally distributed and they are all somewhat skewed.
+
+```{r}
+
+##Scatter plots and correlation plots can visualise and roughly identify the possible correlation between any two continuous variables.
+
+train.corr <- cor(train[, c(1, 3, 4, 5, 6)])
+train.corr
+corrplot(train.corr, method = "circle")
+
+
+
+```
+##From the above graph, there are correlations between two pairs of continuous variables: ap_hi and ap_low, height and weight. The rest have very low correlation coefficient.
+```{r}
+##Hypothesis 1: Do people with different cholesterol levels have different values of mean weight? Are cholesterol and weight correlated?
+oneway.test(train$weight~train$cholesterol, var.equal = TRUE)
+boxplot(train$weight~train$cholesterol)
+```
+##The null hypothesis is that the mean weight for people having different cholesterol levels is the same. Since the p-value is < 2.2e-16, which is smaller than 0.05. We reject the null hypothesis and conclude that there is a difference in the mean weight among people with various cholesterol levels. Also, from the box plots, we can see that median, upper and lower quartile all increase as cholesterol level rises from 1 (normal) to 3 (well above normal). This implies that independent variables of cholesterol and weight are positively correlated.
+
+
+
+```{r}
+##Hypothesis 2: Is there a correlation between independent variables height and weight?
+
+corr.test(train$height, train$weight)
+```
+##The correlation coefficient between height and weight is 0.29. Hence, the two variables are moderately correlated. 
+```{r}
+##Hypothesis 3: Are systolic blood pressure (ap_high) and diastolic blood pressure (ap_low) correlated?
+corr.test(train$ap_hi, train$ap_lo)
+```
+##By applying the correlation test, the correlation coefficient between systolic blood pressure (ap_hi) and diastolic blood pressure (ap_lo) is 0.74, indicating a strong correlation between these two variables. Thus, interaction term ap_hi * ap_lo should be included in the model.
+
+```{r}
+##Hypothesis 4: Will gender affect someone’s smoking habit?
+chisq.test(train$gender, train$smoke, correct=FALSE)
+```
+##By conducting a Chi-Square test with a contingency table, the above result is obtained. The null hypothesis for the Chi-Square test is that the variables are independent of one another while the alternative hypothesis is that they are correlated in some way. The p-value is less than 2.2e-16, which is smaller than 0.05. There is sufficient evidence at 5% significance level to reject the null hypothesis and conclude that there is a correlation between gender and smoke.
+
+```{r}
+##Introduce a new term BMI to replace variables weight and height
+train$BMI <- NA
+train$BMI <- (train$weight/ ((train$height/100)^2))
+
+test$BMI <- NA
+test$BMI <- (test$weight/ ((test$height/100)^2))
+
+
+```
+
+##Include interaction terms
+
+##Gender and smoke are correlated. Thus, an interaction term gender * smoke should be included.
+##Systolic blood pressure and diastolic blood pressureare are strongly correlated. Hence, an interaction term ap_lo * ap_high should be included.
+##Cholesterol and weight are correlated. 
+##Therefore, an interaction term cholesterol * BMI should be included.
+
+```{r}
+## Logistic Regression Model
+lm1 <- glm(cardio~age + gender +BMI + ap_hi + ap_lo + cholesterol + gluc + smoke + alco + active, data = train, family = "binomial")
+summary(lm1)
+
+```
+
+
+
+```{r}
+prob <- predict(lm1, test, type = "response")
+test$pred <- NA
+test$pred[prob >= 0.50] <- "Yes"
+test$pred[prob < 0.50] <- "No"
+table(test$pred, test$cardio)
+```
+
+
+
+
+```{r}
+
+##KNN
+
+
+
+Cardio_knn <- train(cardio ~ age + gender + BMI + ap_hi + ap_lo + cholesterol + gluc + smoke + alco + active, 
+                      data = train, method = "knn"
+                      
+                      )
+Cardio_knn
+
+pred <- predict(Cardio_knn, test)
+
+confusionMatrix(pred, test$cardio, positive = "Yes")
+
+
+
+
+
+
+```
+##The accuracy when handling unseen test data is 69.42%
+
+
+##Naive Bayes classifies observations based on posterior probability, prior probability and the conditional probability of test data. Also, it assumes that the value of a feature in a given class is independent of the values of other features. The confusion matrix showing the performance of decision tree on test data is below.
+```{r}
+NB <- naiveBayes(cardio ~ age + gender + BMI + ap_hi + ap_lo + cholesterol + gluc + smoke + alco + active, data = train)
+
+train_predict <- predict(NB, test)
+
+confusionMatrix(train_predict, test$cardio,positive = "Yes")
+
+```
+##The accuracy when handling unseen test data is 71.05%, which is Higher than the accuracy in the KNN model on the test data i.e. 69.42%.
+
+
+
+
